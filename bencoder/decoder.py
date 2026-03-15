@@ -1,10 +1,10 @@
 class Decoder:
-    def __init__(self, file):
-        self.file = file
-    def decode(self):
-        content = self.file.read()
+    def __init__(self, parsedFilePath):
+        self.parsedFilePath = parsedFilePath
+    def decode(self, file):
+        content = file.read()
         i = 0
-        with open("new-text.txt", "w") as t:
+        with open(self.parsedFilePath, "w") as t:
             while i < len(content):
                 c = content[i]
                 if c.isdigit():

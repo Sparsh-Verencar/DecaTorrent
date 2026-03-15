@@ -1,7 +1,5 @@
 import argparse
-from encoder import Encoder
-from decoder import Decoder
-
+from bencoder import Bencoder
 
 
 def main():
@@ -11,9 +9,7 @@ def main():
     args = parser.parse_args()
     print(args.file.read())
     args.file.seek(0)
-    encoder = Encoder(args.file).encode()
-    with open(".torrent", "r") as f:
-        decoder = Decoder(f).decode()
+    bencoder = Bencoder(inputfile=args.file, parsedFilePath="new-text.txt").run()
 
 if __name__ == "__main__":
     main()

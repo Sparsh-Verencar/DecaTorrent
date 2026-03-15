@@ -1,8 +1,6 @@
 class Encoder:
-    def __init__(self, file):
-        self.file = file
-    def encode(self):
-        unencoded_file = self.file
+    def encode(self, file):
+        unencoded_file = file
         with open(".torrent", "wb") as f:
             for line in unencoded_file.readlines():
                 line = line.strip()
@@ -40,4 +38,3 @@ class Encoder:
                 else:
                     f.write((f"{len(line)}:{line}").encode("utf-8"))
                     continue
-            
