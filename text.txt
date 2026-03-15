@@ -1,0 +1,6 @@
+sparsh verencar
+20
+21
+[hello, 21] 
+[jello, 29]
+{name: sparsh, age: 20}
