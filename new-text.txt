@@ -1,0 +1,6 @@
+saksham verencar
+20
+21
+['hello', 21]
+['jello', 29]
+{'age': 20, 'name': 'sparsh'}
