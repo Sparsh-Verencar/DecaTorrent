@@ -1,81 +1,63 @@
-class Decoder:
-    def __init__(self, parsedFilePath):
-        self.parsedFilePath = parsedFilePath
-    def decode(self, file):
-        content = file.read()
-        i = 0
-        with open(self.parsedFilePath, "w") as t:
-            while i < len(content):
-                c = content[i]
-                if c.isdigit():
-                    j = i
-                    while content[j].isdigit():
-                        j += 1
-                    length = int(content[i:j])
-                    data = content[j+1 : j+1+length]
-                    t.write(f"{data}\n")
-                    i = j + 1 + length
+import hashlib
 
-                elif c == 'i':
-                    end = content.index('e', i)
-                    number = int(content[i+1:end])
-                    t.write(f"{number}\n")  
-                    i = end + 1
-                elif c == 'l':
-                    i += 1
-                    result = []
-                    while content[i] != 'e':
-                        if content[i].isdigit(): 
-                            j = i
-                            while content[j].isdigit():
-                                j += 1
-                            length = int(content[i:j])
-                            data = content[j+1 : j+1+length]
-                            result.append(data)
-                            i = j + 1 + length
-                        elif content[i] == 'i':  
-                            end = content.index('e', i)
-                            number = int(content[i+1:end])
-                            result.append(number) 
-                            i = end + 1
-                    i += 1  
-                    t.write(f"{result}\n")
-                elif c == 'd':
-                    i += 1
-                    result = dict()
-                    isKey = True
-                    key, value = " ", " "
-                    while content[i] != 'e':
-                        if isKey:
-                            if content[i].isdigit(): 
-                                j = i
-                                while content[j].isdigit():
-                                    j += 1
-                                length = int(content[i:j])
-                                data = content[j+1 : j+1+length]
-                                key = data
-                                i = j + 1 + length
-                                isKey = False
-                        else:
-                            if content[i].isdigit(): 
-                                j = i
-                                while content[j].isdigit():
-                                    j += 1
-                                length = int(content[i:j])
-                                data = content[j+1 : j+1+length]
-                                value = data
-                                i = j + 1 + length
-                                result[key] = value
-                                isKey = True
-                            elif content[i] == 'i':  
-                                end = content.index('e', i)
-                                number = int(content[i+1:end])
-                                value = number 
-                                i = end + 1
-                                result[key] = value
-                                isKey = True
-                    i += 1  
-                    t.write(f"{result}\n")
-                else:
-                    i += 1
-            
+class Decoder:
+    def __init__(self):
+        self.raw_content = None
+        self.info_hash = None
+
+    def decode(self, file):
+        self.raw_content = file.read()
+        parsed, _ = self._decode_next(self.raw_content, 0)
+        return parsed
+
+    def _decode_next(self, data, i):
+        c = chr(data[i])
+        if c.isdigit():
+            return self._decode_string(data, i)
+        elif c == 'i':
+            return self._decode_int(data, i)
+        elif c == 'l':
+            return self._decode_list(data, i)
+        elif c == 'd':
+            return self._decode_dict(data, i)
+        else:
+            raise ValueError(f"Unexpected token '{c}' at position {i}")
+
+    def _decode_string(self, data, i):
+        j = i
+        while chr(data[j]).isdigit():
+            j += 1
+        length = int(data[i:j])
+        start = j + 1
+        end = start + length
+        return data[start:end], end
+
+    def _decode_int(self, data, i):
+        end = data.index(ord('e'), i + 1)
+        number = int(data[i + 1:end])
+        return number, end + 1
+
+    def _decode_list(self, data, i):
+        i += 1
+        result = []
+        while chr(data[i]) != 'e':
+            value, i = self._decode_next(data, i)
+            result.append(value)
+        return result, i + 1
+
+    def _decode_dict(self, data, i):
+        i += 1
+        result = {}
+        while chr(data[i]) != 'e':
+            key, i = self._decode_next(data, i)
+            if key == b'info':
+                info_start = i
+                value, i = self._decode_next(data, i)
+                info_end = i
+                self.info_hash = hashlib.sha1(
+                    self.raw_content[info_start:info_end]
+                ).digest()
+            else:
+                value, i = self._decode_next(data, i)
+            result[key] = value
+        return result, i + 1

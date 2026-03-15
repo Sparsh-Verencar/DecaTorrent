@@ -2,14 +2,16 @@ from .encoder import Encoder
 from .decoder import Decoder
 
 class Bencoder:
-    def __init__(self, inputfile, parsedFilePath):
-        self.inputfile = inputfile
-        self.parsedFilePath = parsedFilePath
-        self.torrent = ".torrent"
+    def __init__(self):
         self.encoder = Encoder()
-        self.decoder = Decoder(self.parsedFilePath)
-    
-    def run(self):
-        self.encoder.encode(self.inputfile)
-        with open(self.torrent, "r") as f:
-            self.decoder.decode(f)
+        self.decoder = Decoder()
+
+    def encode(self, data):
+        return self.encoder.encode(data)
+
+    def decode(self, file):
+        return self.decoder.decode(file)
+
+    @property
+    def info_hash(self):
+        return self.decoder.info_hash

@@ -1,6 +1,16 @@
-sparsh verencar
-20
-21
-[hello, 21] 
-[jello, 29]
-{name: sparsh, age: 20}
+{
+    "announce": "http://mock-tracker.local/announce",
+    "created by": "DecaTorrent",
+    "creation date": 1710000000,
+    "info": {
+        "name": "mock_file.iso",
+        "length": 1572864,
+        "piece length": 524288,
+        "pieces": "abc123def456ghi789jkl012mno345pqr678stu901vwx234"
+    },
+    "tags": ["linux", "open-source", "iso"],
+    "stats": {
+        "seeds": 42,
+        "leechers": 7
+    }
+}
