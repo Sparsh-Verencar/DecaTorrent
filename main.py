@@ -1,22 +1,27 @@
 import argparse
 import json
 from bencoder import Bencoder
+from bencoder.torrent_reader import TorrentReader
 
 def main():
     print("Hello from DecaTorrent!")
     parser = argparse.ArgumentParser(prog='DecaTorrent', description='A BitTorrent client')
     subparsers = parser.add_subparsers(dest='command')
 
-    encode_parser = subparsers.add_parser('encode', help='Encode a Python dict to a .torrent file')
+    subparsers.add_parser('encode', help='Encode a JSON file to a .torrent file')
+    
     decode_parser = subparsers.add_parser('decode', help='Decode a .torrent file')
     decode_parser.add_argument("file", type=argparse.FileType('rb'))
+
+    read_parser = subparsers.add_parser('read', help='Read and extract metadata from a .torrent file')
+    read_parser.add_argument("file", type=str)  
 
     args = parser.parse_args()
     bc = Bencoder()
 
     if args.command == 'encode':
         with open("text.txt", "r") as f:
-            data = json.load(f) 
+            data = json.load(f)
         encoded = bc.encode(data)
         with open(".torrent", "wb") as f:
             f.write(encoded)
@@ -29,6 +34,10 @@ def main():
             f.write(str(result))
         if bc.info_hash:
             print("info_hash:", bc.info_hash.hex())
+
+    elif args.command == 'read':
+        reader = TorrentReader(args.file)
+        print(reader)
 
     else:
         parser.print_help()
