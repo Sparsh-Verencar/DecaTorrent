@@ -17,7 +17,7 @@ class TrackerClient:
 
     def _build_url(self) -> str:
         params = {
-            "port": 6881,
+            "port":6881,
             "uploaded": 0,
             "downloaded": 0,
             "left": self.torrent.length,
