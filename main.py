@@ -2,11 +2,15 @@ import argparse
 import json
 from bencoder import Bencoder
 from bencoder.torrent_reader import TorrentReader
+from torrent_client.client import TrackerClient
 
 def main():
     print("Hello from DecaTorrent!")
     parser = argparse.ArgumentParser(prog='DecaTorrent', description='A BitTorrent client')
     subparsers = parser.add_subparsers(dest='command')
+    
+    peers_parser = subparsers.add_parser('peers', help='Get peers from tracker')
+    peers_parser.add_argument("file", type=str, help="Path to .torrent file")
 
     subparsers.add_parser('encode', help='Encode a JSON file to a .torrent file')
     
@@ -38,6 +42,11 @@ def main():
     elif args.command == 'read':
         reader = TorrentReader(args.file)
         print(reader)
+        
+    elif args.command == "peers":
+        torrent = TorrentReader(args.file)
+        client = TrackerClient(torrent)
+        client.get_peers()
 
     else:
         parser.print_help()

@@ -8,7 +8,7 @@ class TorrentReader:
         self._extract(self.raw)
 
     def _extract(self, decoded):
-        self.announce = decoded[b"announce"]
+        self.announce = decoded[b"announce"].decode("utf-8")
         info = decoded[b"info"]
         self.name = info[b"name"]
         self.length = info[b"length"]
