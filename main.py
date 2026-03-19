@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 from bencoder import Bencoder
 from bencoder.torrent_reader import TorrentReader
 from torrent_client.client import TrackerClient
@@ -43,6 +44,12 @@ def main():
     ]:
         add_torrent_arg(subparsers.add_parser(cmd, help=help_text))
 
+    # download-piece subcommand
+    dp_parser = subparsers.add_parser('download-piece', help='Download a single piece from a peer')
+    add_torrent_arg(dp_parser)
+    dp_parser.add_argument("piece_index", type=int, help="Index of the piece to download")
+    dp_parser.add_argument("--output", "-o", type=str, default=None, help="Output file path (optional)")
+
     args = parser.parse_args()
     bc = Bencoder()
 
@@ -76,6 +83,35 @@ def main():
         conn = PeerConnection(ip, port, reader.info_hash, client.peer_id)
         response = conn.connect()
         print(f"Handshake response: {response.hex()}")
+
+    elif args.command == 'download-piece':
+        reader, client = get_tracker_client(args.file)
+        print(f"[main] piece_length = {reader.piece_length}")
+        peers = client.get_peers()
+
+        piece_data = None
+        for ip, port in peers:
+            try:
+                print(f"[main] Trying {ip}:{port}")
+                conn = PeerConnection(ip, port, reader.info_hash, client.peer_id)
+                conn.connect()
+                conn.send_interested()
+                conn.wait_for_unchoke()
+                piece_data = conn.download_piece(args.piece_index, reader.piece_length)
+                conn.close()
+                break
+            except Exception as e:
+                print(f"[main] Failed with {ip}:{port} — {e}, trying next peer...")
+
+        if not piece_data:
+            print("[main] All peers failed.")
+            return
+
+        print(f"[main] Downloaded piece {args.piece_index}: {len(piece_data)} bytes")
+        output_path = args.output or f"piece_{args.piece_index}.bin"
+        with open(output_path, "wb") as f:
+            f.write(piece_data)
+        print(f"[main] Saved to {output_path}")
 
     else:
         parser.print_help()

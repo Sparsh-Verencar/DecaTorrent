@@ -22,6 +22,7 @@ class TrackerClient:
             "downloaded": 0,
             "left": self.torrent.length,
             "compact": 1,
+            "numwant": 50,
         }
         return (
             self.torrent.announce

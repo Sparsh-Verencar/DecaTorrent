@@ -1,4 +1,15 @@
 import socket
+import struct
+
+MSG_CHOKE = 0
+MSG_UNCHOKE = 1
+MSG_INTERESTED = 2
+MSG_BITFIELD = 5
+MSG_REQUEST = 6
+MSG_PIECE = 7
+
+BLOCK_SIZE = 2 ** 14  # 16KB
+
 
 class PeerConnection:
     def __init__(self, ip, port, info_hash, peer_id):
@@ -7,7 +18,7 @@ class PeerConnection:
         self.info_hash = info_hash
         self.peer_id = peer_id
         self.sock = None
-        pass
+        self.am_choked = True
 
     def build_handshake(self):
         return (
@@ -20,9 +31,96 @@ class PeerConnection:
 
     def connect(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.settimeout(10)
         try:
             self.sock.connect((self.ip, self.port))
-            self.sock.send(self.build_handshake())
-            return self.sock.recv(68)
+            self.sock.sendall(self.build_handshake())
+            return self._recv_exact(68)  # handshake response is always 68 bytes
         except Exception as e:
-            raise ValueError(f"Could not create soccket connection: {e}")
+            raise ValueError(f"Could not create socket connection: {e}")
+
+    # -------------------------
+    # Core message primitives
+    # -------------------------
+
+    def _recv_exact(self, n):
+        """Read exactly n bytes — sock.recv() may return less."""
+        buf = b""
+        while len(buf) < n:
+            chunk = self.sock.recv(n - len(buf))
+            if not chunk:
+                raise ConnectionError("Peer disconnected")
+            buf += chunk
+        return buf
+
+    def send_message(self, msg_id, payload=b""):
+        length = 1 + len(payload)
+        self.sock.sendall(struct.pack(">I", length) + bytes([msg_id]) + payload)
+
+    def receive_message(self):
+        """Returns dict with 'id' and 'payload', or None for keep-alive."""
+        raw_len = self._recv_exact(4)
+        length = struct.unpack(">I", raw_len)[0]
+        if length == 0:
+            return None  # keep-alive
+        msg_id = self._recv_exact(1)[0]
+        payload = self._recv_exact(length - 1) if length > 1 else b""
+        return {"id": msg_id, "payload": payload}
+
+    # -------------------------
+    # Download flow
+    # -------------------------
+
+    def send_interested(self):
+        self.send_message(MSG_INTERESTED)
+        print("[PeerConnection] Sent interested")
+
+    def wait_for_unchoke(self):
+        """Drain messages until the peer unchokes us."""
+        while self.am_choked:
+            msg = self.receive_message()
+            if msg is None:
+                continue
+            if msg["id"] == MSG_UNCHOKE:
+                self.am_choked = False
+                print("[PeerConnection] Unchoked!")
+            elif msg["id"] == MSG_BITFIELD:
+                print("[PeerConnection] Received bitfield (ignored for now)")
+            elif msg["id"] == MSG_CHOKE:
+                print("[PeerConnection] Choked.")
+
+    def send_request(self, piece_index, begin, length):
+        payload = struct.pack(">III", piece_index, begin, length)
+        self.send_message(MSG_REQUEST, payload)
+        print(f"[PeerConnection] Sent request: piece={piece_index} begin={begin} length={length}")
+
+    def receive_piece(self):
+        while True:
+            msg = self.receive_message()
+            if msg is None:
+                continue
+            print(f"[PeerConnection] Received message id={msg['id']}")  # add this
+            if msg["id"] == MSG_PIECE:
+                index = struct.unpack(">I", msg["payload"][0:4])[0]
+                begin = struct.unpack(">I", msg["payload"][4:8])[0]
+                data = msg["payload"][8:]
+                return index, begin, data
+            elif msg["id"] == MSG_CHOKE:
+                raise ConnectionError("Peer re-choked us during download")
+
+    def download_piece(self, piece_index, piece_length):
+        """Download a full piece in 16KB blocks."""
+        piece_data = b""
+        downloaded = 0
+        while downloaded < piece_length:
+            block_length = min(BLOCK_SIZE, piece_length - downloaded)
+            self.send_request(piece_index, downloaded, block_length)
+            _, _, block = self.receive_piece()
+            piece_data += block
+            downloaded += len(block)
+            print(f"[PeerConnection] Progress: {downloaded}/{piece_length} bytes")
+        return piece_data
+
+    def close(self):
+        if self.sock:
+            self.sock.close()
