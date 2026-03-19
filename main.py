@@ -30,12 +30,7 @@ def get_tracker_client(torrent_path):
     client = TrackerClient(reader)
     return reader, client
 
-# ------------------------------------------------------------------ #
-#  Phase 5: threaded peer worker                                       #
-# ------------------------------------------------------------------ #
-
 def _peer_worker(ip, port, reader, client, manager):
-    """One thread per peer — connect, grab bitfield, download pieces in a loop."""
     tag = f"[{ip}:{port}]"
     peer_id_str = f"{ip}:{port}"
     try:
@@ -54,7 +49,7 @@ def _peer_worker(ip, port, reader, client, manager):
         while not manager.is_complete():
             piece_index = manager.pick_piece(peer_id=peer_id_str)
             if piece_index is None:
-                time.sleep(0.5)   # nothing for us right now; wait and retry
+                time.sleep(0.5)   
                 continue
 
             actual_length = min(
@@ -74,7 +69,7 @@ def _peer_worker(ip, port, reader, client, manager):
             except Exception as e:
                 print(f"{tag} Error on piece {piece_index}: {e} — requeueing")
                 manager.requeue_piece(piece_index)
-                break   # broken connection; exit worker
+                break   
 
         conn.close()
 
@@ -100,13 +95,11 @@ def main():
     ]:
         add_torrent_arg(subparsers.add_parser(cmd, help=help_text))
 
-    # download-piece subcommand (unchanged)
     dp_parser = subparsers.add_parser('download-piece', help='Download a single piece from a peer')
     add_torrent_arg(dp_parser)
     dp_parser.add_argument("piece_index", type=int, help="Index of the piece to download")
     dp_parser.add_argument("--output", "-o", type=str, default=None, help="Output file path (optional)")
 
-    # download subcommand (full file via PieceManager)
     dl_parser = subparsers.add_parser('download', help='Download the full file from peers')
     add_torrent_arg(dl_parser)
     dl_parser.add_argument("--output", "-o", type=str, default=None, help="Output file path (default: downloads/<name>)")
@@ -213,7 +206,6 @@ def main():
             threads.append(t)
             t.start()
 
-        # Main thread: print progress until done or all threads finish
         done = len(manager.completed)
         total = manager.total_pieces
         with tqdm(total=total, unit="piece", desc=name, dynamic_ncols=True) as bar:

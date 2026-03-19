@@ -41,12 +41,8 @@ class PeerConnection:
         except Exception as e:
             raise ValueError(f"Could not create socket connection: {e}")
 
-    # -------------------------
-    # Core message primitives
-    # -------------------------
 
     def _recv_exact(self, n):
-        """Read exactly n bytes — sock.recv() may return less."""
         buf = b""
         while len(buf) < n:
             chunk = self.sock.recv(n - len(buf))
@@ -60,7 +56,6 @@ class PeerConnection:
         self.sock.sendall(struct.pack(">I", length) + bytes([msg_id]) + payload)
 
     def receive_message(self):
-        """Returns dict with 'id' and 'payload', or None for keep-alive."""
         raw_len = self._recv_exact(4)
         length = struct.unpack(">I", raw_len)[0]
         if length == 0:
@@ -69,15 +64,12 @@ class PeerConnection:
         payload = self._recv_exact(length - 1) if length > 1 else b""
         return {"id": msg_id, "payload": payload}
 
-    # -------------------------
-    # Download flow
-    # -------------------------
     def receive_bitfield(self) -> bytes | None:
         try:
             msg = self.receive_message()
             if msg and msg["id"] == MSG_BITFIELD:
                 return msg["payload"]
-            return None  # peer sent something else — that's fine
+            return None  
         except Exception:
             return None
     def send_interested(self):
@@ -85,7 +77,6 @@ class PeerConnection:
         print("[PeerConnection] Sent interested")
 
     def wait_for_unchoke(self):
-        """Drain messages until the peer unchokes us."""
         while self.am_choked:
             msg = self.receive_message()
             if msg is None:
@@ -108,7 +99,7 @@ class PeerConnection:
             msg = self.receive_message()
             if msg is None:
                 continue
-            print(f"[PeerConnection] Received message id={msg['id']}")  # add this
+            print(f"[PeerConnection] Received message id={msg['id']}")  
             if msg["id"] == MSG_PIECE:
                 index = struct.unpack(">I", msg["payload"][0:4])[0]
                 begin = struct.unpack(">I", msg["payload"][4:8])[0]
@@ -116,15 +107,13 @@ class PeerConnection:
                 return index, begin, data
             elif msg["id"] == MSG_CHOKE:
                 raise ConnectionError("Peer re-choked us during download")
-    # Inside PeerConnection (or wherever you drive the download loop)
 
     def download_all(self, piece_manager: PieceManager, pieces_hashes, piece_length):
         while not piece_manager.is_complete():
             piece_index = piece_manager.pick_piece(peer_id=self.peer_id)
             if piece_index is None:
-                break  # this peer has nothing useful for us right now
+                break  
 
-            # Last piece may be shorter than piece_length
             total_length = piece_manager.total_length
             actual_length = min(piece_length, total_length - piece_index * piece_length)
 
@@ -136,7 +125,6 @@ class PeerConnection:
                 print(f"[!] Piece {piece_index} failed verification, requeueing")
                 piece_manager.requeue_piece(piece_index)
     def download_piece(self, piece_index, piece_length):
-        """Download a full piece in 16KB blocks."""
         piece_data = b""
         downloaded = 0
         while downloaded < piece_length:

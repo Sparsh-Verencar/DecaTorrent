@@ -13,7 +13,7 @@ class TrackerClient:
     def __init__(self, torrent: TorrentReader):
         self.torrent = torrent
         self.bencoder = Bencoder()
-        self.peer_id = b'-DC0001-' + os.urandom(12)  # DC = DecaTorrent
+        self.peer_id = b'-DC0001-' + os.urandom(12)  
 
     def _build_url(self) -> str:
         params = {
