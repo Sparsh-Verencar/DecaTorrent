@@ -1,22 +1,41 @@
-# 🌊 DecaTorrent(readme in progress)
+<div align="center">
 
-A BitTorrent client built from scratch in Python — no `libtorrent`, no shortcuts.
+```
+██████╗ ███████╗ ██████╗ █████╗ ████████╗ ██████╗ ██████╗ ██████╗ ███████╗███╗   ██╗████████╗
+██╔══██╗██╔════╝██╔════╝██╔══██╗╚══██╔══╝██╔═══██╗██╔══██╗██╔══██╗██╔════╝████╗  ██║╚══██╔══╝
+██║  ██║█████╗  ██║     ███████║   ██║   ██║   ██║██████╔╝██████╔╝█████╗  ██╔██╗ ██║   ██║   
+██║  ██║██╔══╝  ██║     ██╔══██║   ██║   ██║   ██║██╔══██╗██╔══██╗██╔══╝  ██║╚██╗██║   ██║   
+██████╔╝███████╗╚██████╗██║  ██║   ██║   ╚██████╔╝██║  ██║██║  ██║███████╗██║ ╚████║   ██║   
+╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝   ╚═╝
+```
 
-DecaTorrent implements the BitTorrent protocol spec (BEP-0003) piece by piece, from bencode parsing all the way to downloading files from real peers over TCP.
+**A BitTorrent client built from scratch in Python.**
+
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
+![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=flat-square)
+
+</div>
+
+---
+
+DecaTorrent is a fully functional BitTorrent client implemented from the ground up in Python — no libtorrent, no shortcuts. Every layer is hand-rolled: bencode parsing, tracker communication, the peer wire protocol, SHA-1 piece verification, rarest-first piece selection, and concurrent multi-peer downloading via threads.
+
+Built as a learning project to deeply understand how BitTorrent works under the hood.
 
 ---
 
 ## Features
 
-- ✅ Bencode encoder & decoder
-- ✅ `.torrent` file parser (extracts metadata, `info_hash`, file tree)
-- ✅ HTTP tracker communication (compact peer list parsing)
-- 🔄 TCP peer handshake *(in progress)*
-- ⬜ Peer message parsing & piece downloading
-- ⬜ SHA-1 piece verification & disk writes
-- ⬜ Multi-peer concurrent downloading
-- ⬜ Tit-for-tat choking/unchoking
-- ⬜ Seeding, resume, magnet links *(planned)*
+- **Bencode encoder/decoder** — full recursive implementation supporting strings, integers, lists, and dicts
+- **Torrent file reader** — parses `.torrent` metadata and computes the `info_hash` from scratch
+- **HTTP tracker client** — sends compliant announce requests, parses compact peer lists
+- **Peer wire protocol** — TCP handshake, bitfield parsing, interested/unchoke/request/piece message flow
+- **SHA-1 piece verification** — every piece is verified against the torrent's hash list before being written
+- **Rarest-first piece selection** — `PieceManager` tracks peer bitfields and picks the globally rarest available piece
+- **Concurrent downloading** — spawns one thread per peer (up to N), all sharing a thread-safe `PieceManager`
+- **Progress bar** — live terminal progress via `tqdm`
+- **Pre-allocated output file** — seeks and writes pieces at the correct byte offset, no reassembly needed
 
 ---
 
@@ -24,35 +43,116 @@ DecaTorrent implements the BitTorrent protocol spec (BEP-0003) piece by piece, f
 
 ```
 DecaTorrent/
+│
 ├── bencoder/
-│   ├── encoder.py         # Bencode encoder
-│   ├── decoder.py         # Bencode decoder
-│   ├── bencoder.py        # Facade class: Bencoder
-│   └── torrent_reader.py  # Parses .torrent files, computes info_hash
+│   ├── encoder.py          # Recursive bencode encoder
+│   ├── decoder.py          # Recursive bencode decoder
+│   ├── bencoder.py         # Bencoder facade (encode + decode)
+│   └── torrent_reader.py   # Parses .torrent files, computes info_hash
 │
 ├── torrent_client/
-│   ├── client.py          # TrackerClient — HTTP GET to tracker, peer list parsing
-│   └── peer.py            # PeerConnection — TCP handshake, peer messages (WIP)
+│   ├── client.py           # TrackerClient — announce requests, peer list parsing
+│   ├── peer.py             # PeerConnection — TCP handshake, wire protocol, piece download
+│   └── piece_manager.py    # PieceManager — rarest-first selection, thread-safe state, disk I/O
 │
-└── main.py                # CLI entry point
+├── main.py                 # CLI entry point
+└── pyproject.toml
 ```
 
 ---
 
-## CLI Usage
+## How It Works
+
+### The BitTorrent Pipeline
+
+```
+.torrent file
+     │
+     ▼
+TorrentReader  ──►  info_hash, piece hashes, announce URL, file length
+     │
+     ▼
+TrackerClient  ──►  HTTP GET /announce  ──►  compact peer list [(ip, port), ...]
+     │
+     ▼
+PeerConnection (×N threads)
+     │
+     ├── TCP connect
+     ├── Handshake  (pstrlen + "BitTorrent protocol" + reserved + info_hash + peer_id)
+     ├── Receive bitfield
+     ├── Send Interested
+     ├── Wait for Unchoke
+     └── Loop:
+           pick_piece()  ──►  request block(s)  ──►  receive piece
+                │
+                ▼
+           verify_piece()  (SHA-1 hash check)
+                │
+                ▼
+           write_piece()  (seek to offset, write to pre-allocated file)
+```
+
+### Rarest-First Selection
+
+`PieceManager.pick_piece(peer_id)` finds pieces that:
+1. Are still needed (not in progress or completed)
+2. The requesting peer has (per its bitfield)
+3. Are owned by the fewest peers globally (rarest)
+
+This maximises piece diversity across the swarm — the core insight behind BitTorrent's efficiency.
+
+### Thread Safety
+
+All mutations to `needed`, `in_progress`, `completed`, and `peer_bitfields` are protected by a `threading.Lock`. Disk writes happen outside the lock (I/O is slow), with state updates locked immediately after.
+
+---
+
+## Installation
+
+Requires Python 3.11+ and [`uv`](https://github.com/astral-sh/uv).
 
 ```bash
-# Encode a value to bencode
-python main.py encode "hello"
+git clone https://github.com/Sparsh-Verencar/DecaTorrent.git
+cd DecaTorrent
+uv sync
+```
 
-# Decode a bencoded string
-python main.py decode "5:hello"
+---
 
-# Read and display metadata from a .torrent file
-python main.py read path/to/file.torrent
+## Usage
 
-# Fetch peer list from tracker
-python main.py peers path/to/file.torrent
+### Download a torrent
+```bash
+uv run main.py download path/to/file.torrent
+uv run main.py download path/to/file.torrent -o output/path
+uv run main.py download path/to/file.torrent --max-peers 5
+```
+
+### Download a single piece (debug)
+```bash
+uv run main.py download-piece path/to/file.torrent 0
+uv run main.py download-piece path/to/file.torrent 42 -o piece_42.bin
+```
+
+### Inspect a torrent file
+```bash
+uv run main.py read path/to/file.torrent
+```
+
+### Fetch peers from tracker
+```bash
+uv run main.py peers path/to/file.torrent
+```
+
+### TCP handshake with a peer
+```bash
+uv run main.py handshake path/to/file.torrent
+```
+
+### Bencode utilities
+```bash
+uv run main.py encode
+uv run main.py decode path/to/file.torrent
 ```
 
 ---
@@ -61,67 +161,43 @@ python main.py peers path/to/file.torrent
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1 | Bencode + `.torrent` parser | ✅ Done |
-| 2 | HTTP tracker → peer list | ✅ Done |
-| 3 | TCP handshake + peer messages + piece download | 🔄 In Progress |
-| 4 | Piece selection, SHA-1 verification, disk writes | ⬜ Pending |
-| 5 | Multi-peer concurrency, tit-for-tat | ⬜ Pending |
-| 6 | Seeding, resume, magnet links, UDP tracker | ⬜ Planned |
+| 1 | Bencode encoder/decoder, `.torrent` file reader | ✅ Done |
+| 2 | HTTP tracker requests, compact peer list parsing | ✅ Done |
+| 3 | TCP handshake, peer wire protocol, single piece download | ✅ Done |
+| 4 | SHA-1 verification, rarest-first selection, disk writes | ✅ Done |
+| 5 | Concurrent multi-peer downloading with threading | ✅ Done |
+| 6 | Choking/unchoking (tit-for-tat) | ⬜ Planned |
+| 7 | Seeding | ⬜ Planned |
+| 8 | Resume incomplete downloads | ⬜ Planned |
+| 9 | Magnet links + DHT (BEP-0005) | ⬜ Planned |
+| 10 | UDP tracker (BEP-0015) | ⬜ Planned |
 
 ---
 
-## Getting Started
+## Key BEPs Implemented
 
-### Prerequisites
-
-- Python 3.10+
-- No external dependencies for core functionality *(standard library only so far)*
-
-### Installation
-
-```bash
-git clone https://github.com/yourusername/DecaTorrent.git
-cd DecaTorrent
-```
-
-### Run
-
-```bash
-python main.py peers path/to/file.torrent
-```
+- [BEP-0003](https://www.bittorrent.org/beps/bep_0003.html) — The BitTorrent Protocol Specification (core)
 
 ---
 
-## How It Works
+## Tech Stack
 
-### Bencode
-
-BitTorrent uses a custom serialization format called **bencode**. DecaTorrent implements a full encoder and decoder from scratch, handling all four bencode types: integers, byte strings, lists, and dictionaries.
-
-### Tracker Communication
-
-On receiving a `.torrent` file, DecaTorrent extracts the `info_hash` (SHA-1 of the bencoded `info` dictionary) and sends an HTTP GET request to the tracker. The tracker responds with a compact binary peer list, which is parsed into `(ip, port)` tuples.
-
-### Peer Protocol *(in progress)*
-
-Each peer connection begins with a 68-byte handshake:
-
-```
-[pstrlen: 1 byte] [pstr: 19 bytes] [reserved: 8 bytes] [info_hash: 20 bytes] [peer_id: 20 bytes]
-```
-
-After a successful handshake, peers exchange messages to negotiate piece transfers.
+- **Python 3.11+** — core language
+- **`requests`** — HTTP tracker communication
+- **`tqdm`** — terminal progress bar
+- **`threading`** — concurrent peer connections
+- **`hashlib`** — SHA-1 piece verification
+- **`socket`** — raw TCP peer connections
+- **`uv`** — package and environment management
 
 ---
 
-## Spec References
+## Verified Working On
 
-- [BEP-0003 — BitTorrent Protocol](https://www.bittorrent.org/beps/bep_0003.html)
-- [BEP-0015 — UDP Tracker Protocol](https://www.bittorrent.org/beps/bep_0015.html)
-- [BEP-0005 — DHT Protocol (Magnet Links)](https://www.bittorrent.org/beps/bep_0005.html)
+- `debian-13.4.0-amd64-netinst.iso` — 754 MB, 3016 pieces
 
 ---
 
-## License
-
-MIT
+<div align="center">
+  Built from scratch by <a href="https://github.com/Sparsh-Verencar">Sparsh Verencar</a>
+</div>
