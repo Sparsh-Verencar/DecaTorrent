@@ -1,5 +1,6 @@
 import socket
 import struct
+import hashlib
 
 MSG_CHOKE = 0
 MSG_UNCHOKE = 1
@@ -120,7 +121,13 @@ class PeerConnection:
             downloaded += len(block)
             print(f"[PeerConnection] Progress: {downloaded}/{piece_length} bytes")
         return piece_data
-
+    
+    
     def close(self):
         if self.sock:
             self.sock.close()
+            
+def verify_piece(piece_data: bytes, piece_index: int, pieces: list) -> bool:
+    expected_hash = pieces[piece_index]
+    actual_hash = hashlib.sha1(piece_data).digest()
+    return actual_hash == expected_hash

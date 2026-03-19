@@ -4,7 +4,7 @@ import os
 from bencoder import Bencoder
 from bencoder.torrent_reader import TorrentReader
 from torrent_client.client import TrackerClient
-from torrent_client.peer import PeerConnection
+from torrent_client.peer import PeerConnection, verify_piece
 
 def print_banner():
     banner = r"""
@@ -108,6 +108,12 @@ def main():
             return
 
         print(f"[main] Downloaded piece {args.piece_index}: {len(piece_data)} bytes")
+
+        if not verify_piece(piece_data, args.piece_index, reader.pieces):
+            print(f"[main] Piece {args.piece_index} FAILED verification. Discarding.")
+            return
+        print(f"[main] Piece {args.piece_index} verified OK.")
+
         output_path = args.output or f"piece_{args.piece_index}.bin"
         with open(output_path, "wb") as f:
             f.write(piece_data)
