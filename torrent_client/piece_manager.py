@@ -1,4 +1,5 @@
 import os
+import threading
 from collections import defaultdict
 
 class PieceManager:
@@ -13,6 +14,8 @@ class PieceManager:
         self.completed = set()                        # pieces verified and written
         self.peer_bitfields: dict[str, set[int]] = {} # peer_id -> set of piece indices
 
+        self._lock = threading.Lock()                 # protects all shared state above
+
     # --- Bitfield tracking ---
 
     def update_bitfield(self, peer_id: str, bitfield: bytes):
@@ -23,11 +26,13 @@ class PieceManager:
                 piece_index = byte_index * 8 + (7 - bit_index)
                 if piece_index < self.total_pieces and (byte >> bit_index) & 1:
                     pieces.add(piece_index)
-        self.peer_bitfields[peer_id] = pieces
+        with self._lock:
+            self.peer_bitfields[peer_id] = pieces
 
     def record_have(self, peer_id: str, piece_index: int):
         """Handle a HAVE message — peer just got a piece."""
-        self.peer_bitfields.setdefault(peer_id, set()).add(piece_index)
+        with self._lock:
+            self.peer_bitfields.setdefault(peer_id, set()).add(piece_index)
 
     # --- Piece selection: rarest first ---
 
@@ -39,27 +44,29 @@ class PieceManager:
           - this peer has
         Returns None if no such piece exists.
         """
-        peer_has = self.peer_bitfields.get(peer_id, set())
-        candidates = (self.needed - self.in_progress) & peer_has
+        with self._lock:
+            peer_has = self.peer_bitfields.get(peer_id, set())
+            candidates = (self.needed - self.in_progress) & peer_has
 
-        if not candidates:
-            return None
+            if not candidates:
+                return None
 
-        # Count how many peers have each candidate piece
-        rarity: dict[int, int] = defaultdict(int)
-        for pieces in self.peer_bitfields.values():
-            for piece in candidates:
-                if piece in pieces:
-                    rarity[piece] += 1
+            # Count how many peers have each candidate piece
+            rarity: dict[int, int] = defaultdict(int)
+            for pieces in self.peer_bitfields.values():
+                for piece in candidates:
+                    if piece in pieces:
+                        rarity[piece] += 1
 
-        # Pick the piece owned by the fewest peers
-        rarest = min(candidates, key=lambda p: rarity[p])
-        self.in_progress.add(rarest)
-        return rarest
+            # Pick the piece owned by the fewest peers
+            rarest = min(candidates, key=lambda p: rarity[p])
+            self.in_progress.add(rarest)
+            return rarest
 
     def requeue_piece(self, piece_index: int):
         """Call this if a download fails — put it back in the pool."""
-        self.in_progress.discard(piece_index)
+        with self._lock:
+            self.in_progress.discard(piece_index)
 
     # --- Disk I/O ---
 
@@ -75,13 +82,15 @@ class PieceManager:
             f.seek(offset)
             f.write(data)
 
-        self.in_progress.discard(piece_index)
-        self.needed.discard(piece_index)
-        self.completed.add(piece_index)
+        with self._lock:
+            self.in_progress.discard(piece_index)
+            self.needed.discard(piece_index)
+            self.completed.add(piece_index)
         print(f"[✓] Piece {piece_index} written ({len(self.completed)}/{self.total_pieces})")
 
     def is_complete(self) -> bool:
-        return len(self.completed) == self.total_pieces
+        with self._lock:
+            return len(self.completed) == self.total_pieces
 
     def _ensure_file(self):
         """Pre-allocate the output file to full size on first call."""

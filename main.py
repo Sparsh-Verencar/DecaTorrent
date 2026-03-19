@@ -1,6 +1,8 @@
 import argparse
 import json
 import os
+import threading
+import time
 from bencoder import Bencoder
 from bencoder.torrent_reader import TorrentReader
 from torrent_client.client import TrackerClient
@@ -26,6 +28,58 @@ def get_tracker_client(torrent_path):
     reader = TorrentReader(torrent_path)
     client = TrackerClient(reader)
     return reader, client
+
+# ------------------------------------------------------------------ #
+#  Phase 5: threaded peer worker                                       #
+# ------------------------------------------------------------------ #
+
+def _peer_worker(ip, port, reader, client, manager):
+    """One thread per peer — connect, grab bitfield, download pieces in a loop."""
+    tag = f"[{ip}:{port}]"
+    peer_id_str = f"{ip}:{port}"
+    try:
+        conn = PeerConnection(ip, port, reader.info_hash, client.peer_id)
+        conn.connect()
+
+        bitfield = conn.receive_bitfield()
+        if not bitfield:
+            print(f"{tag} No bitfield — skipping.")
+            return
+        manager.update_bitfield(peer_id_str, bitfield)
+
+        conn.send_interested()
+        conn.wait_for_unchoke()
+
+        while not manager.is_complete():
+            piece_index = manager.pick_piece(peer_id=peer_id_str)
+            if piece_index is None:
+                time.sleep(0.5)   # nothing for us right now; wait and retry
+                continue
+
+            actual_length = min(
+                reader.piece_length,
+                reader.length - piece_index * reader.piece_length,
+            )
+            try:
+                data = conn.download_piece(piece_index, actual_length)
+                if verify_piece(data, piece_index, reader.pieces):
+                    manager.write_piece(piece_index, data)
+                    done = len(manager.completed)
+                    total = manager.total_pieces
+                    print(f"{tag} ✓ piece {piece_index}  ({done}/{total})")
+                else:
+                    print(f"{tag} ✗ piece {piece_index} hash mismatch — requeueing")
+                    manager.requeue_piece(piece_index)
+            except Exception as e:
+                print(f"{tag} Error on piece {piece_index}: {e} — requeueing")
+                manager.requeue_piece(piece_index)
+                break   # broken connection; exit worker
+
+        conn.close()
+
+    except Exception as e:
+        print(f"{tag} Connection failed: {e}")
+
 
 def main():
     print_banner()
@@ -55,6 +109,7 @@ def main():
     dl_parser = subparsers.add_parser('download', help='Download the full file from peers')
     add_torrent_arg(dl_parser)
     dl_parser.add_argument("--output", "-o", type=str, default=None, help="Output file path (default: downloads/<name>)")
+    dl_parser.add_argument("--max-peers", type=int, default=10, help="Max simultaneous peer connections (default: 10)")
 
     args = parser.parse_args()
     bc = Bencoder()
@@ -131,6 +186,8 @@ def main():
 
         name = reader.name.decode() if isinstance(reader.name, bytes) else reader.name
         output_path = args.output or os.path.join("downloads", name)
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+
         manager = PieceManager(
             total_pieces=len(reader.pieces),
             piece_length=reader.piece_length,
@@ -138,52 +195,32 @@ def main():
             output_path=output_path,
         )
 
-        print(f"[main] Downloading '{reader.name}' → {output_path}")
+        print(f"[main] Downloading '{name}' → {output_path}")
         print(f"[main] {len(reader.pieces)} pieces, {reader.piece_length} bytes each")
 
-        for ip, port in peers:
-            if manager.is_complete():
-                break
-            try:
-                peer_id_str = f"{ip}:{port}"
-                print(f"[main] Connecting to {peer_id_str}")
-                conn = PeerConnection(ip, port, reader.info_hash, client.peer_id)
-                conn.connect()
+        selected = peers[:args.max_peers]
+        print(f"[main] Spawning {len(selected)} peer thread(s)...\n")
 
-                # Register the peer's bitfield with the manager
-                bitfield = conn.receive_bitfield()
-                if bitfield:
-                    manager.update_bitfield(peer_id_str, bitfield)
+        threads = []
+        for ip, port in selected:
+            t = threading.Thread(
+                target=_peer_worker,
+                args=(ip, port, reader, client, manager),
+                daemon=True,
+                name=f"peer-{ip}:{port}",
+            )
+            threads.append(t)
+            t.start()
 
-                conn.send_interested()
-                conn.wait_for_unchoke()
+        # Main thread: print progress until done or all threads finish
+        while not manager.is_complete() and any(t.is_alive() for t in threads):
+            done = len(manager.completed)
+            total = manager.total_pieces
+            print(f"  Progress: {done}/{total} pieces ({done/total*100:.1f}%)")
+            time.sleep(2)
 
-                # Download all pieces this peer can offer
-                while not manager.is_complete():
-                    piece_index = manager.pick_piece(peer_id=peer_id_str)
-                    if piece_index is None:
-                        break  # peer has nothing left we need
-
-                    actual_length = min(
-                        reader.piece_length,
-                        reader.length - piece_index * reader.piece_length
-                    )
-
-                    try:
-                        data = conn.download_piece(piece_index, actual_length)
-                        if verify_piece(data, piece_index, reader.pieces):
-                            manager.write_piece(piece_index, data)
-                        else:
-                            print(f"[main] Piece {piece_index} failed verification, requeueing")
-                            manager.requeue_piece(piece_index)
-                    except Exception as e:
-                        print(f"[main] Error downloading piece {piece_index}: {e}, requeueing")
-                        manager.requeue_piece(piece_index)
-
-                conn.close()
-
-            except Exception as e:
-                print(f"[main] Failed with {ip}:{port} — {e}, trying next peer...")
+        for t in threads:
+            t.join(timeout=5)
 
         if manager.is_complete():
             print(f"\n[main] ✓ Download complete! Saved to: {output_path}")
