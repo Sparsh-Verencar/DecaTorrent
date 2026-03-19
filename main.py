@@ -8,6 +8,7 @@ from bencoder.torrent_reader import TorrentReader
 from torrent_client.client import TrackerClient
 from torrent_client.peer import PeerConnection, verify_piece
 from torrent_client.piece_manager import PieceManager
+from tqdm import tqdm
 
 def print_banner():
     banner = r"""
@@ -213,12 +214,16 @@ def main():
             t.start()
 
         # Main thread: print progress until done or all threads finish
-        while not manager.is_complete() and any(t.is_alive() for t in threads):
-            done = len(manager.completed)
-            total = manager.total_pieces
-            print(f"  Progress: {done}/{total} pieces ({done/total*100:.1f}%)")
-            time.sleep(2)
-
+        done = len(manager.completed)
+        total = manager.total_pieces
+        with tqdm(total=total, unit="piece", desc=name, dynamic_ncols=True) as bar:
+            last = 0
+            while not manager.is_complete() and any(t.is_alive() for t in threads):
+                done = len(manager.completed)
+                total = manager.total_pieces
+                print(f"  Progress: {done}/{total} pieces ({done/total*100:.1f}%)")
+                time.sleep(2)
+            bar.update(manager.total_pieces - last)
         for t in threads:
             t.join(timeout=5)
 
