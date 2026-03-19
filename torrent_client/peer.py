@@ -1,6 +1,7 @@
 import socket
 import struct
 import hashlib
+from torrent_client.piece_manager import PieceManager
 
 MSG_CHOKE = 0
 MSG_UNCHOKE = 1
@@ -71,7 +72,14 @@ class PeerConnection:
     # -------------------------
     # Download flow
     # -------------------------
-
+    def receive_bitfield(self) -> bytes | None:
+        try:
+            msg = self.receive_message()
+            if msg and msg["id"] == MSG_BITFIELD:
+                return msg["payload"]
+            return None  # peer sent something else — that's fine
+        except Exception:
+            return None
     def send_interested(self):
         self.send_message(MSG_INTERESTED)
         print("[PeerConnection] Sent interested")
@@ -108,7 +116,25 @@ class PeerConnection:
                 return index, begin, data
             elif msg["id"] == MSG_CHOKE:
                 raise ConnectionError("Peer re-choked us during download")
+    # Inside PeerConnection (or wherever you drive the download loop)
 
+    def download_all(self, piece_manager: PieceManager, pieces_hashes, piece_length):
+        while not piece_manager.is_complete():
+            piece_index = piece_manager.pick_piece(peer_id=self.peer_id)
+            if piece_index is None:
+                break  # this peer has nothing useful for us right now
+
+            # Last piece may be shorter than piece_length
+            total_length = piece_manager.total_length
+            actual_length = min(piece_length, total_length - piece_index * piece_length)
+
+            data = self.download_piece(piece_index, actual_length)
+
+            if verify_piece(data, piece_index, pieces_hashes):
+                piece_manager.write_piece(piece_index, data)
+            else:
+                print(f"[!] Piece {piece_index} failed verification, requeueing")
+                piece_manager.requeue_piece(piece_index)
     def download_piece(self, piece_index, piece_length):
         """Download a full piece in 16KB blocks."""
         piece_data = b""

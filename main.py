@@ -5,6 +5,7 @@ from bencoder import Bencoder
 from bencoder.torrent_reader import TorrentReader
 from torrent_client.client import TrackerClient
 from torrent_client.peer import PeerConnection, verify_piece
+from torrent_client.piece_manager import PieceManager
 
 def print_banner():
     banner = r"""
@@ -44,11 +45,16 @@ def main():
     ]:
         add_torrent_arg(subparsers.add_parser(cmd, help=help_text))
 
-    # download-piece subcommand
+    # download-piece subcommand (unchanged)
     dp_parser = subparsers.add_parser('download-piece', help='Download a single piece from a peer')
     add_torrent_arg(dp_parser)
     dp_parser.add_argument("piece_index", type=int, help="Index of the piece to download")
     dp_parser.add_argument("--output", "-o", type=str, default=None, help="Output file path (optional)")
+
+    # download subcommand (full file via PieceManager)
+    dl_parser = subparsers.add_parser('download', help='Download the full file from peers')
+    add_torrent_arg(dl_parser)
+    dl_parser.add_argument("--output", "-o", type=str, default=None, help="Output file path (default: downloads/<name>)")
 
     args = parser.parse_args()
     bc = Bencoder()
@@ -118,6 +124,72 @@ def main():
         with open(output_path, "wb") as f:
             f.write(piece_data)
         print(f"[main] Saved to {output_path}")
+
+    elif args.command == 'download':
+        reader, client = get_tracker_client(args.file)
+        peers = client.get_peers()
+
+        name = reader.name.decode() if isinstance(reader.name, bytes) else reader.name
+        output_path = args.output or os.path.join("downloads", name)
+        manager = PieceManager(
+            total_pieces=len(reader.pieces),
+            piece_length=reader.piece_length,
+            total_length=reader.length,
+            output_path=output_path,
+        )
+
+        print(f"[main] Downloading '{reader.name}' → {output_path}")
+        print(f"[main] {len(reader.pieces)} pieces, {reader.piece_length} bytes each")
+
+        for ip, port in peers:
+            if manager.is_complete():
+                break
+            try:
+                peer_id_str = f"{ip}:{port}"
+                print(f"[main] Connecting to {peer_id_str}")
+                conn = PeerConnection(ip, port, reader.info_hash, client.peer_id)
+                conn.connect()
+
+                # Register the peer's bitfield with the manager
+                bitfield = conn.receive_bitfield()
+                if bitfield:
+                    manager.update_bitfield(peer_id_str, bitfield)
+
+                conn.send_interested()
+                conn.wait_for_unchoke()
+
+                # Download all pieces this peer can offer
+                while not manager.is_complete():
+                    piece_index = manager.pick_piece(peer_id=peer_id_str)
+                    if piece_index is None:
+                        break  # peer has nothing left we need
+
+                    actual_length = min(
+                        reader.piece_length,
+                        reader.length - piece_index * reader.piece_length
+                    )
+
+                    try:
+                        data = conn.download_piece(piece_index, actual_length)
+                        if verify_piece(data, piece_index, reader.pieces):
+                            manager.write_piece(piece_index, data)
+                        else:
+                            print(f"[main] Piece {piece_index} failed verification, requeueing")
+                            manager.requeue_piece(piece_index)
+                    except Exception as e:
+                        print(f"[main] Error downloading piece {piece_index}: {e}, requeueing")
+                        manager.requeue_piece(piece_index)
+
+                conn.close()
+
+            except Exception as e:
+                print(f"[main] Failed with {ip}:{port} — {e}, trying next peer...")
+
+        if manager.is_complete():
+            print(f"\n[main] ✓ Download complete! Saved to: {output_path}")
+        else:
+            remaining = len(manager.needed)
+            print(f"\n[main] ✗ Incomplete. {remaining}/{len(reader.pieces)} pieces still missing.")
 
     else:
         parser.print_help()
