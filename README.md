@@ -42,21 +42,29 @@ Built as a learning project to deeply understand how BitTorrent works under the 
 ## Project Structure
 
 ```
-DecaTorrent/
-│
-├── bencoder/
-│   ├── encoder.py          # Recursive bencode encoder
-│   ├── decoder.py          # Recursive bencode decoder
-│   ├── bencoder.py         # Bencoder facade (encode + decode)
-│   └── torrent_reader.py   # Parses .torrent files, computes info_hash
-│
-├── torrent_client/
-│   ├── client.py           # TrackerClient — announce requests, peer list parsing
-│   ├── peer.py             # PeerConnection — TCP handshake, wire protocol, piece download
-│   └── piece_manager.py    # PieceManager — rarest-first selection, thread-safe state, disk I/O
-│
-├── main.py                 # CLI entry point
-└── pyproject.toml
+Directory structure:
+└── sparsh-verencar-decatorrent/
+    ├── README.md
+    ├── main.py
+    ├── pyproject.toml
+    ├── uv.lock
+    ├── .python-version
+    ├── .torrent
+    ├── bencoder/
+    │   ├── __init__.py
+    │   ├── bencoder.py
+    │   ├── decoder.py
+    │   ├── encoder.py
+    │   └── torrent_reader.py
+    ├── tests/
+    │   ├── new-text.txt
+    │   └── text.txt
+    └── torrent_client/
+        ├── _init__.py
+        ├── client.py
+        ├── peer.py
+        └── piece_manager.py
+
 ```
 
 ---
